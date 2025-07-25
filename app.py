@@ -17,10 +17,10 @@ serializer = URLSafeTimedSerializer(app.secret_key)
 
 # Database config
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')  # Render sets this env var automatically
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    "connect_args": {"check_same_thread": False},
-    "poolclass": StaticPool,
-}
+# app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+#     "connect_args": {"check_same_thread": False},
+#     "poolclass": StaticPool,
+# }
 db = SQLAlchemy(app)
 
 # Mail config (for Gmail, use an App Password!)
