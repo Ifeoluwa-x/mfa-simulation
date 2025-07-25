@@ -4,6 +4,7 @@ from flask_mail import Mail, Message
 import pyotp
 import datetime
 import re
+from sqlalchemy import create_engine
 from itsdangerous import URLSafeTimedSerializer
 from sqlalchemy.pool import StaticPool
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -16,7 +17,7 @@ serializer = URLSafeTimedSerializer(app.secret_key)
 
 
 # Database config
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')  # Render sets this env var automatically
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
 # app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 #     "connect_args": {"check_same_thread": False},
 #     "poolclass": StaticPool,
@@ -33,6 +34,20 @@ app.config.update(
 )
 
 mail = Mail(app)
+
+@app.route('/create_db')
+def create_db():
+    engine = create_engine(app.config['SQLALCHEMY_DATABASE_URI'])
+    conn = engine.connect()
+    conn.execute("commit")  # required to run CREATE DATABASE outside transactions
+    try:
+        conn.execute("CREATE DATABASE mfa_app_db;")
+    except Exception as e:
+        conn.close()
+        return f"Error or DB already exists: {e}"
+    conn.close()
+    return "Database 'mfa_app_db' created successfully!"
+
 
 # Models
 class User(db.Model):
