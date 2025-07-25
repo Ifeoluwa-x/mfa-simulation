@@ -73,24 +73,32 @@ def create_tables():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        username = request.form["username"]
-        email = request.form["email"]
+        username = request.form["username"].strip()
+        email = request.form["email"].strip().lower()
         password = request.form["password"]
-        confirm = request.form["confirm"]  # Make sure this matches your form input name
+        confirm = request.form["confirm"]
 
-        # Validate password
+        # Validate password strength
         if not re.match(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*[.!@#$&*])[A-Za-z\d.!@#$&*]{8,}$', password):
-            flash("Password must be at least 8 characters long, contain 1 uppercase, 1 lowercase, and 1 special character (.!@#$&*)", "warning")
-            return render_template("register.html")
+            flash(
+                "Password must be at least 8 characters long, contain 1 uppercase, 1 lowercase, and 1 special character (.!@#$&*)",
+                "warning"
+            )
+            return render_template("register.html", username=username, email=email)
 
+        # Check password confirmation
         if password != confirm:
-            flash("Passwords do not match.", "error")
-            return render_template("register.html")
+            flash("Passwords do not match.", "warning")
+            return render_template("register.html", username=username, email=email)
 
-        # Check if user/email already exists
-        if User.query.filter_by(username=username).first() or User.query.filter_by(email=email).first():
-            flash("Username or email already exists.", "error")
-            return render_template("register.html")
+        # Check if username or email already exists
+        if User.query.filter_by(username=username.lower()).first():
+            flash("Username already exists. Please choose a different username.", "error")
+            return render_template("register.html", email=email)
+
+        if User.query.filter_by(email=email).first():
+            flash("Email already registered. Please use a different email or login.", "error")
+            return render_template("register.html", username=username)
 
         # Create user
         secret = pyotp.random_base32()
@@ -98,19 +106,27 @@ def register():
         user = User(username=username.lower(), email=email, password=hashed_password, secret=secret, is_verified=False)
 
         db.session.add(user)
-        db.session.commit()
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            flash("An error occurred while creating your account. Please try again.", "error")
+            return render_template("register.html")
 
-        # Generate token & send verification email
+        # Generate email verification token and link
         token = serializer.dumps(email, salt='email-verify')
         link = url_for('verify_email', token=token, _external=True)
+
+        # Send verification email
         msg = Message("Email Verification", sender="specialtopics4490@gmail.com", recipients=[email])
         msg.body = f"Click to verify your email: {link}"
         mail.send(msg)
 
         flash("A verification link has been sent to your email.", "success")
-        return redirect("/")  # Redirect to your login page which is at "/"
+        return redirect(url_for("login"))  # Redirect to your login route, adjust if different
 
     return render_template("register.html")
+
 
 
 
