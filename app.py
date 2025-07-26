@@ -235,18 +235,26 @@ def login():
 
             return redirect("/verify")
         else:
-            # Only log failed login if the user exists (i.e. is a registered user)
-            if user:
-                behavior = UserBehaviorLog(
-                user_id=user.id,  # ✅ This line adds user_id to the entry
-                username=username.lower(),
-                email=user.email,
-                event_type="login_failed",
-                details="Invalid password for registered user"
-            )
+            # ✅ Only log if user exists and is verified (i.e., registered and not blocked at email stage)
+            if user and user.is_verified:
+                # Optional: Check if they have no successful OTP yet
+                otp_success = (
+                    LoginLog.query
+                    .filter_by(user_id=user.id, success=True)
+                    .order_by(LoginLog.timestamp.desc())
+                    .first()
+                )
 
-                db.session.add(behavior)
-                db.session.commit()
+                if not otp_success:
+                    behavior = UserBehaviorLog(
+                        user_id=user.id,
+                        username=username.lower(),
+                        email=user.email,
+                        event_type="login_failed",
+                        details="Invalid password for registered & verified user (no OTP success yet)"
+                    )
+                    db.session.add(behavior)
+                    db.session.commit()
 
             flash("Invalid username or password", "error")
 
@@ -296,7 +304,7 @@ def verify():
 
             # # ✅ Track incorrect OTP attempts
             # session["incorrect_otp_attempts"] = session.get("incorrect_otp_attempts", 0) + 1
-            # flash(f"Invalid OTP. Attempt #{session['incorrect_otp_attempts']}", "error")
+            flash(f"Invalid OTP.", "error")
 
     return render_template("otp.html")
 
