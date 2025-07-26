@@ -29,8 +29,8 @@ app.config.update(
     MAIL_SERVER='smtp.gmail.com',
     MAIL_PORT=587,
     MAIL_USE_TLS=True,
-    MAIL_USERNAME=os.environ.get('MAIL_USERNAME'),
-    MAIL_PASSWORD=os.environ.get('MAIL_PASSWORD')
+    # MAIL_USERNAME=os.environ.get('MAIL_USERNAME'),
+    # MAIL_PASSWORD=os.environ.get('MAIL_PASSWORD')
 )
 
 mail = Mail(app)
@@ -53,10 +53,12 @@ def create_db():
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True)
-    password = db.Column(db.String(200))  # instead of 80
+    password = db.Column(db.String(200))
     email = db.Column(db.String(120), unique=True)
-    secret = db.Column(db.String(120))  # TOTP secret
-    is_verified = db.Column(db.Boolean, default=False)  # New
+    secret = db.Column(db.String(120))
+    is_verified = db.Column(db.Boolean, default=False)
+    created_date = db.Column(db.DateTime, default=datetime.datetime.utcnow)  # ✅ NEW
+
 
 
 class LoginLog(db.Model):
@@ -66,8 +68,20 @@ class LoginLog(db.Model):
     delay = db.Column(db.Float)
     timestamp = db.Column(db.DateTime, default=db.func.now())
 
-# Create tables and sample user
+
+class UserBehaviorLog(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)  # Nullable for pre-registration
+    username = db.Column(db.String(150))
+    email = db.Column(db.String(150))
+    event_type = db.Column(db.String(50))
+    details = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+
+# Create tables and sample user.
 def create_tables():
+    db.drop_all()
     db.create_all()
 
     if not User.query.first():
@@ -99,6 +113,18 @@ def register():
                 "Password must be at least 8 characters long, contain 1 uppercase, 1 lowercase, and 1 special character (.!@#$&*)",
                 "warning"
             )
+
+            # Log the behavior
+            behavior = UserBehaviorLog(
+                username=username.lower(),
+                email=email,
+                event_type="password_violation",
+                details="Password did not meet complexity requirements"
+            )
+            db.session.add(behavior)
+
+            db.session.commit()
+
             return render_template("register.html", username=username, email=email)
 
         # Check password confirmation
@@ -118,10 +144,36 @@ def register():
         # Create user
         secret = pyotp.random_base32()
         hashed_password = generate_password_hash(password)
-        user = User(username=username.lower(), email=email, password=hashed_password, secret=secret, is_verified=False)
+        user = User(
+            username=username.lower(),
+            email=email,
+            password=hashed_password,
+            secret=secret,
+            is_verified=False
+        )
 
         db.session.add(user)
         try:
+            db.session.flush()  # Get user.id before full commit
+
+           # Link past behavior logs by username AND email
+            UserBehaviorLog.query.filter_by(
+                username=username.lower(),
+                email=email,
+                user_id=None
+            ).update({ 'user_id': user.id })
+
+            # Log successful registration
+            behavior = UserBehaviorLog(
+                user_id=user.id,
+                username=username.lower(),
+                email=email,
+                event_type="registration_successful",
+                details="User successfully registered and verification email sent"
+            )
+            db.session.add(behavior)
+
+
             db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -138,7 +190,7 @@ def register():
         mail.send(msg)
 
         flash("A verification link has been sent to your email.", "success")
-        return redirect(url_for("login"))  # Redirect to your login route, adjust if different
+        return redirect(url_for("login"))
 
     return render_template("register.html")
 
@@ -152,6 +204,7 @@ def login():
         password = request.form["password"]
 
         user = User.query.filter_by(username=username.lower()).first()
+
         if user and check_password_hash(user.password, password):
             if not user.is_verified:
                 flash("Your email is not verified. Please verify your email before logging in.", "error")
@@ -166,28 +219,39 @@ def login():
             )
 
             if last_success_log:
-                # Show success page with last login delay time
                 return render_template("success.html", time=round(last_success_log.delay, 2), username=user.username)
 
             # No previous successful login, proceed with OTP
             session["user_id"] = user.id
             session["start_time"] = datetime.datetime.now().isoformat()
 
-            # Generate OTP
             totp = pyotp.TOTP(user.secret)
             otp_code = totp.now()
             session["otp_code"] = otp_code
 
-            # Send OTP to email
             msg = Message("Your OTP Code", sender="noreply@example.com", recipients=[user.email])
             msg.body = f"Your OTP code is: {otp_code}"
             mail.send(msg)
 
             return redirect("/verify")
         else:
+            # Only log failed login if the user exists (i.e. is a registered user)
+            if user:
+                behavior = UserBehaviorLog(
+                user_id=user.id,  # ✅ This line adds user_id to the entry
+                username=username.lower(),
+                email=user.email,
+                event_type="login_failed",
+                details="Invalid password for registered user"
+            )
+
+                db.session.add(behavior)
+                db.session.commit()
+
             flash("Invalid username or password", "error")
 
     return render_template("login.html")
+
 
 
 
@@ -202,27 +266,40 @@ def verify():
 
         user = db.session.get(User, user_id)
 
-
         if entered_otp == correct_otp:
             delay = (datetime.datetime.now() - datetime.datetime.fromisoformat(session["start_time"])).total_seconds()
-            # Log once here
             log = LoginLog(user_id=user_id, success=True, delay=delay)
             db.session.add(log)
             db.session.commit()
 
-            # Store data in session to display after redirect
+            # ✅ Stop counting after success
+            session["incorrect_otp_attempts"] = 0
+
             session["login_delay"] = round(delay, 2)
             session["username"] = user.username
-
-            # Redirect to success page
             return redirect(url_for("success"))
+
         else:
-            log = LoginLog(user_id=user_id, success=False, delay=0)
-            db.session.add(log)
+            # Log incorrect OTP attempt
+
+            behavior = UserBehaviorLog(
+            user_id=user.id,  # <-- Add thiss
+            username=user.username,
+            email=user.email,
+            event_type="otp_failed",
+            details="Incorrect OTP entered"
+        )
+
+
+            db.session.add(behavior)
             db.session.commit()
-            flash("Invalid OTP, Please try again", "error")
+
+            # ✅ Track incorrect OTP attempts
+            session["incorrect_otp_attempts"] = session.get("incorrect_otp_attempts", 0) + 1
+            flash(f"Invalid OTP. Attempt #{session['incorrect_otp_attempts']}", "error")
 
     return render_template("otp.html")
+
 
 @app.route("/success")
 def success():
@@ -241,7 +318,7 @@ def success():
 @app.route("/verify_email/<token>")
 def verify_email(token):
     try:
-        email = serializer.loads(token, salt='email-verify', max_age=3600)  # 1 hour
+        email = serializer.loads(token, salt='email-verify', max_age=600)  # 10 minutes expiration
     except:
         flash("Verification link expired or invalid.", "error")
         return redirect("/login")
