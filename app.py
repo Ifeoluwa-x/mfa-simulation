@@ -99,6 +99,17 @@ def create_tables():
         print(f"Test user created: test / test123 (secret: {secret})")
 
 
+@app.route("/reset_db")
+def reset_db():
+    try:
+        db.drop_all()     # Drop all tables
+        db.create_all()   # Recreate tables with ID sequences reset
+        return "All tables dropped and recreated. IDs reset."
+    except Exception as e:
+        return f"Error: {e}"
+    
+    
+
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
