@@ -81,7 +81,7 @@ class UserBehaviorLog(db.Model):
 
 # Create tables and sample user.
 def create_tables():
-    db.drop_all()
+    # db.drop_all()
     db.create_all()
 
     if not User.query.first():
