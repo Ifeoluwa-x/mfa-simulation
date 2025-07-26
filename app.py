@@ -294,9 +294,9 @@ def verify():
             db.session.add(behavior)
             db.session.commit()
 
-            # ✅ Track incorrect OTP attempts
-            session["incorrect_otp_attempts"] = session.get("incorrect_otp_attempts", 0) + 1
-            flash(f"Invalid OTP. Attempt #{session['incorrect_otp_attempts']}", "error")
+            # # ✅ Track incorrect OTP attempts
+            # session["incorrect_otp_attempts"] = session.get("incorrect_otp_attempts", 0) + 1
+            # flash(f"Invalid OTP. Attempt #{session['incorrect_otp_attempts']}", "error")
 
     return render_template("otp.html")
 
